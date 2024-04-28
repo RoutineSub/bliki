@@ -1,0 +1,170 @@
+---
+name: Given 3
+categories: [Testing, BDD]
+---
+
+[Given 3](https://github.com/chris-pardy/given3) is a library for making it much cleaner to setup tests in Typescript and Javascript. It was strongly inspired by
+the library given2 but with with a few core concepts added:
+1. Type safety
+2. Ability to *refine* values
+3. Ability to re-use values between tests
+4. A way to specify cleaning up values
+
+<preview-break />
+Before getting into how this makes testing easier I think it's worth touching on each of these points directly.
+
+## Type safety
+```ts
+
+// given2 has nice syntax but it's all just any typed
+given2('counter', () => 2);
+
+// given3 get's type-safety by creating a Given<T> object
+const counter = given3(() => 2);
+
+it('has the counter value', () => {
+    expect(given2.counter).toBe(2); // passes
+    expect(counter.value).toBe(2); // passes
+})
+
+it('has a typo' () => {
+    expect(given2.conter).toBe(2); // failed - undefined !== 2
+    expect(conter.value).toBe(2); // type error conter is undefined
+})
+
+```
+
+## Refining values
+```ts
+
+// given2 required you to create new givens to refine the value
+given2('counter', () => 2);
+given2('counterPlusOne', () => given.counter + 1);
+
+// given3 allows given's to refer to their previous values
+const counter = given3(() => 2);
+counter.define(() => counter.value + 1);
+
+it('has a counter value of 3', () => {
+    expect(given2.counter).toBe(3); // failed 2 !== 3
+    expect(counter.value).toBe(3); // passes
+})
+
+```
+
+## Reusing values between tests
+```ts
+
+describe('a test suite', () => {
+    // given2 lazily computes and caches the value, the cache is released
+    // in an "afterEach" hook.
+    let g2Counter = 0;
+    given2('counter', () => g2Counter++);
+    
+    // given3 supports a scope argument for it's cache, moving the release
+    // to the "afterAll" hook.
+    let g3Counter = 0;
+    const counter = given3(() => g3Counter++, { scope: 'All' })
+
+
+    it('test 1', () => {
+        expect(given2.counter).toBe(1); // depends on order of execution.
+        expect(counter.value).toBe(1); // passes
+    })
+
+    it('test 2', () => {
+        expect(given2.counter).toBe(1); // depends on order of execution.
+        expect(counter.value).toBe(1); // passes
+    })
+
+})
+
+```
+
+## Cleaning up values
+```ts
+
+// given2 had no way to do cleanup
+given2('tempFile', () => {
+    writeFileSync('myFile.json', JSON.stringify({ test: true }));
+    return 'myFile.json';
+});
+
+// given3 specifies a way to cleanup values
+const tempFile = given3(() => {
+    writeFileSync('myFile.json', JSON.stringify({ test: true }));
+    return 'myFile.json'
+}).cleanup((fileName) => {
+    rmSync(fileName);
+})
+```
+
+# Rethinking Arrange, Act, Assert
+Arrange, Act, Assert is something that you learn about early on when talking about unit tests. Tests written with this framework
+start by arranging their system, setting up dependencies and generally getting things into the nessesary state for testing. Then
+they act on the system in a way that is relevent to the tests, and finally they assert the state of the system has changed in an expected
+way, or the expected result has been returned.
+
+```ts
+it('keeps a running sum of values', () => {
+    // arrange: we create the system we're testing
+    // and get it into a known state.
+    const calculator = new Calculator();
+    calculator.enter(1);
+    
+    // act: we trigger the functionality we're testing
+    const result = calculator.sum(2);
+
+    // assert: we verify that the behavior is as we've intended.
+    expect(result).toBe(3);
+})
+```
+
+We can take Arrange, Act, Assert and map it to given
+
+```ts
+describe('calculator tests', () => {
+    // arrange
+    const calculator = given(() => new Calculator());
+    calculator.define(() => {
+        calculator.value.enter(1);
+        return calculator.value;
+    })
+
+    // act
+    const sumResult = given(() => calculator.value.sum(2));
+
+    // assert
+    it('keeps a running sum of values', () => {
+        expect(sumResult.value).toBe(3);
+    })
+})
+```
+
+Given helps to reduce the overhead of needing to write the repeated setup steps, in the example above we could make more
+assertions on the calculator without repeating the setup. However the lazily computed nature of given's means that we can do
+much more by re-arranging our test strcture and embracing the seeminly unnatural Act, Arrange, Assert structure.
+
+```ts
+describe('calculator tests', () => {
+    const calculator = given(() => new Calculator());
+    describe('sum with 2', () => {
+        // act
+        const sumResult = given(() => calculator.value.sum(2));
+
+        describe('given the inital value is 1', () => {
+            // arrange
+            calculator.define(() => calculator.vlaue.enter(1));
+            
+            //assert
+            it('returns 3', () => {
+                expect(sumResult).toBe(3)
+            })
+        })
+
+    })
+})
+```
+
+The fact that the same test can be written with the act and arrange patterns inverted to act, arrange, assert means that you can now logically structure your
+test cases with a hierarchy: What You're Test > Conditions In which the test is being run > Expected Results.
